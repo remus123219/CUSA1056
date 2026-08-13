@@ -1,0 +1,385 @@
+```{r}
+install.packages(c("dplyr", "ggplot2", "maps", "patchwork", "tidyverse", "FRK", "lubridate", 
+                   "MASS", "gstat", "sp", "spacetime", "animation"))
+
+```
+
+
+Linear regression
+
+## Numerical Example: A Simple Simulated Dataset
+
+To make the mechanics concrete, we simulate 40 points from the true
+relationship
+
+$$
+y_i \;=\; 2 + 0.8\, x_i + \varepsilon_i,
+\qquad \varepsilon_i \sim N(0, 1.2^{2}),
+$$
+
+fit an OLS line, and inspect the output.
+
+```{r ols-example, fig.width=7, fig.height=4}
+set.seed(2026)        # Set the random seed to 2026 to make the random number generation reproducible.
+
+n <- 40               # Define the sample size n as 40 observations.
+
+x <- runif(n, min = 0, max = 10)  
+# Generate n random values for x from a uniform distribution between 0 and 10.
+
+y <- 2 + 0.8 * x + rnorm(n, sd = 1.2)  
+# Generate y values using a linear model with intercept 2 and slope 0.8 plus normally distributed 
+# noise with standard deviation 1.2.
+
+# Fit OLS
+fit <- lm(y ~ x)      # Fit an ordinary least squares regression model of y on x.
+
+summary(fit)          # Display a detailed summary of the fitted regression 
+                      # model, including coefficients and statistics.
+```
+
+Inspecting the output, the estimated coefficients should be close to the
+true values \(\beta_0 = 2\) and \(\beta_1 = 0.8\), with standard errors
+that reflect the sample size and the noise level \(\sigma\).
+
+### Visualising the Fit
+
+```{r ols-plot, fig.width=7, fig.height=4}
+plot(x, y, pch = 16, col = "steelblue",
+     xlab = "x", ylab = "y",
+     main = "OLS line with residuals")  
+# Create a scatter plot of x and y with solid blue points, labeled axes, and a descriptive title.
+
+abline(fit, col = "darkred", lwd = 2)  
+# Add the fitted OLS regression line to the plot in dark red with a thicker line width.
+
+# Draw residuals as vertical segments
+y_hat <- fitted(fit)  
+# Compute the fitted (predicted) values from the regression model and store them in y_hat.
+
+segments(x, y, x, y_hat, col = "grey60", lty = 2)  
+# Draw dashed grey vertical lines from each observed y value to its corresponding fitted value to
+# #visualize residuals.
+
+legend("topleft", bty = "n", cex = 0.9,
+       legend = c("data", "OLS fit", "residuals"),
+       col    = c("steelblue", "darkred", "grey60"),
+       pch    = c(16, NA, NA),
+       lty    = c(NA, 1, 2),
+       lwd    = c(NA, 2, 1))  
+# Add a legend in the top-left corner explaining the data points, OLS line, and residual lines with
+# matching styles.
+```
+
+
+### Reconstructing OLS "by Hand"
+
+```{r ols-by-hand}
+X <- cbind(1, x)                              # design matrix
+beta_hat <- solve(t(X) %*% X) %*% t(X) %*% y  # normal equations
+beta_hat
+coef(fit)                                     # compare with lm()
+```
+
+The two sets of numbers agree to machine precision. 
+
+### A Non-Linear function Extension: Same Machinery, New Columns
+
+To make the "linear in the coefficients" point tangible, we now fit a
+**quadratic** curve to a slightly non-linear dataset, using OLS with a
+design matrix whose columns are \((1, x, x^{2})\).
+
+```{r ols-quadratic, fig.width=7, fig.height=4}
+set.seed(7)  
+# Reproducibility
+
+x  <- seq(0, 10, length.out = 60)  
+# x grid (0–10, 60 pts)
+
+y  <- 1 + 0.5 * x - 0.05 * x^2 + rnorm(length(x), sd = 0.6)  
+# Quadratic model + noise
+
+fit_quad <- lm(y ~ x + I(x^2))  
+# Fit quadratic regression
+
+coef(fit_quad)  
+# Show coefficients
+
+# Plot the fit
+xg <- seq(0, 10, length.out = 200)  
+# Fine grid for smooth curve
+
+yg <- predict(fit_quad, newdata = data.frame(x = xg))  
+# Predicted values
+
+plot(x, y, pch = 16, col = "steelblue",
+     xlab = "x", ylab = "y",
+     main = "Quadratic fit via linear regression")  
+# Scatter plot
+
+lines(xg, yg, col = "darkred", lwd = 2)  
+# Add fitted curve
+```
+# Deterministic Prediction — Inverse Distance Weighting (Part 2)
+
+## Inverse Distance Weighting (IDW)
+
+## IDW in R — using `gstat`
+
+We will interpolate temperatures on a spatio-temporal grid, deliberately
+**omitting 15 July 2023** from the training data, so that we can later see
+how the method behaves on a day with no observations.
+
+```{r idw-gstat}
+library("dplyr")
+library("ggplot2")
+library("gstat")
+
+NOAA_df <- read.csv("NOAA_2023 v2.csv", header = TRUE, sep = ",")  
+# Load NOAA data from CSV
+
+# Subset to Tmax, July 2023
+Tmax <- filter(NOAA_df,
+               var  == "Tmax" &
+               month == 7     &
+               year  == 2023)  
+# Filter: Tmax, July 2023
+
+# 20 x 20 spatial grid, 6 time points across the month
+pred_grid <- expand.grid(lon = seq(-100, -80, length = 20),
+                         lat = seq(  32,  46, length = 20),
+                         day = seq(   5,  30, length = 6))  
+# Create space–time prediction grid
+
+# Remove 15 July from training data
+Tmax_no_15 <- filter(Tmax, !(day == 15))  
+# Exclude day 15 observations
+
+# IDW with alpha = 4
+Tmax_July_idw <- idw(formula   = z ~ 1,
+                     locations = ~ lon + lat + day,
+                     data      = Tmax_no_15,
+                     newdata   = pred_grid,
+                     idp       = 4)  
+# Perform 3D IDW interpolation (power = 4)
+```
+
+We can then plot `Tmax_July_idw$var1.pred` on the prediction grid.
+Note that on 15 July the predicted surface will look **smoother** than on
+the surrounding days: with no data available on that day, the predictor
+borrows information from adjacent days. This is a typical behaviour of any
+predictor on days with no observations.
+
+```{r, warning=FALSE}
+library("dplyr")      # Data manipulation
+library("ggplot2")    # Plotting
+library("gstat")      # Spatial interpolation (IDW)
+library("maps")       # Map outlines
+
+# ---------------------------------------------------------------------------
+# 1. Attach predictions to the grid
+# ---------------------------------------------------------------------------
+
+pred_grid1 <- pred_grid %>%
+  mutate(z_pred = Tmax_July_idw$var1.pred)  
+# Add IDW predictions to grid
+
+pred_days <- sort(unique(pred_grid1$day))  
+# Get the 6 prediction days
+
+Tmax_days <- Tmax %>% 
+  filter(day %in% pred_days)  
+# Keep observations for those days
+
+# ---------------------------------------------------------------------------
+# 2. Basemap (state + country outlines)
+# ---------------------------------------------------------------------------
+
+states_map <- map_data("state")  
+# Load US state boundaries
+
+world_map  <- map_data("world")  
+# Load world country boundaries
+
+lon_range <- range(pred_grid1$lon)  
+# Longitude limits
+
+lat_range <- range(pred_grid1$lat)  
+# Latitude limits
+
+# ---------------------------------------------------------------------------
+# 3. Faceted map: one panel per day
+# ---------------------------------------------------------------------------
+
+ggplot() +
+
+  geom_raster(data = pred_grid1,
+              aes(x = lon, y = lat, fill = z_pred)) +
+  # IDW surface (filled grid)
+
+  geom_polygon(data = world_map,
+               aes(x = long, y = lat, group = group),
+               fill = NA, colour = "black", size = 0.3) +
+  # Country borders
+
+  geom_path(data = states_map,
+            aes(x = long, y = lat, group = group),
+            colour = "grey40", size = 0.25) +
+  # State borders
+
+  geom_point(data = Tmax_days,
+             aes(x = lon, y = lat, fill = z),
+             shape = 21, colour = "white", size = 1.8, stroke = 0.3) +
+  # Observed stations
+
+  scale_fill_distiller(name = expression(T[max]~"("*degree*C*")"),
+                       palette = "Spectral",
+                       limits  = c(10, 45)) +
+  # Color scale for temperature
+
+  coord_quickmap(xlim = lon_range, ylim = lat_range, expand = FALSE) +
+  # Fix map extent and aspect ratio
+
+  facet_wrap(~ day, nrow = 2,
+             labeller = labeller(day = function(d) paste("July", d, "2023"))) +
+  # One panel per day
+
+  labs(x = "Longitude", y = "Latitude",
+       title = expression("IDW interpolation of "*T[max]*
+                          " (July 2023), "*alpha*" = 4"),
+       subtitle = "15 July was withheld from the training data") +
+  # Titles and labels
+
+  theme_bw(base_size = 12) +
+  # Clean theme
+
+  theme(strip.background = element_rect(fill = "grey90"),
+        panel.grid.minor = element_blank())  
+  # Minor styling adjustments
+```
+
+# Linear Regression Models with Basis Functions (Part 3)
+
+## Application to a dataset of COVID cases in US
+
+The dataset used for the regression combines publicly available sources at the US county level. Daily cumulative COVID-19 case and death counts were obtained from the Johns Hopkins University Center for Systems Science and Engineering (JHU CSSE) county-level time series, from which weekly new cases and new deaths were derived. The series covers every week from 22 January 2020, when JHU began reporting, through 9 March 2023, when the county-level feed was retired, giving just over three years of weekly observations that span all major waves of the US epidemic. County boundaries and demographic information were obtained from the 2016–2020 five-year American Community Survey (ACS) via the US Census Bureau's API, specifically table S1810, which provides the percentage of the civilian non-institutionalised population reporting a disability — used here as a proxy for the share of long-term ill residents. Longitude and latitude were computed as the geographic centroids of each county's polygon. 
+
+The sources were merged on the five-digit county FIPS code, yielding an analytic dataset in which each row corresponds to one county on one week, with variables for new cases, new deaths, centroid longitude and latitude, weeks elapsed since the start of the series, and the county's share of population with a disability.
+
+## Constructing Basis Functions with `FRK`
+
+The **FRK** package can automatically build basis functions at multiple
+resolutions.
+
+```{r frk-basis, warning=FALSE}
+library("FRK")
+library("sp")
+
+covid19_US <- read.csv("covid_US_weekly.csv", header=T, sep=",")
+covid19_US$new_cases_per_ten_thousand <-covid19_US$new_cases/covid19_US$population*100000
+
+# `covid19_US` is our spatio-temporal data frame with columns
+
+# Build Gaussian radial basis functions at a single resolution
+RB <- auto_basis(data = covid19_US[, c("lon", "lat")] %>% SpatialPoints(),
+                nres = 1,
+                type = "Gaussian")
+
+# Evaluate basis functions at each observation location
+RB_col <- eval_basis(basis = RB,
+                s = covid19_US[, c("lon", "lat")] %>% as.matrix()) %>% as.matrix()
+
+colnames(RB_col) <- paste0("B", 1:ncol(RB_col))
+```
+
+### Attach Basis Functions
+
+```{r covid-basis}
+covid19_reg <- cbind(covid19_US, RB_col) %>%
+  dplyr::select(new_cases_per_ten_thousand,
+                lon, lat, week, pct_disab,
+                B1:B9)
+```
+
+### Fit the regression model
+
+```{r covid-lm}
+library(lubridate)
+
+m1_eq  <- new_cases_per_ten_thousand ~ lon + lat + week + pct_disab + B1 + 
+            B2 + B3 + B4 + B5 + B6 +B7 +B8 +B9
+
+m1 <- lm(formula = m1_eq,
+           data    = covid19_reg)
+
+summary(m1)
+```
+
+
+
+### In-Class Challenge
+
+> **Challenge.** If you think that new cases grow and then drop during the period.  How can you modify the model?
+
+
+```{r covid-lm}
+
+
+
+
+
+
+
+```
+
+
+
+# Poisson and Negative Binomial Regression for Count Data (Part 4)
+
+### Fitting Poisson Regression to the COVID-19 Data
+
+```{r poisson-fit}
+covid19_reg_expand <- cbind(covid19_reg, new_cases=covid19_US$new_cases,
+                            population=covid19_US$population)
+
+m2_eq  <- new_cases ~ offset(log(population)) + lon + lat + week + pct_disab + B1 +
+                         B2 + B3 + B4 + B5 + B6 +B7 +B8 +B9
+
+m2 <- glm( m2_eq,data = covid19_reg_expand, 
+                  family = poisson(link = "log"))
+
+summary(m2)
+
+```
+
+Interestingly we find the latitude now becomes significant and all basis functions significant.  Is that a good fit?  We can have the following check for Poisson regression.
+
+### Diagnosing Overdispersion
+
+Under a correct Poisson model, the ratio of the residual deviance to the
+residual degrees of freedom should be close to **1**. Any substantially
+larger value is a red flag for overdispersion.
+
+```{r poisson-dispersion}
+m2$deviance / m2$df.residual
+```
+
+For the COVID-19 data this ratio is much greater than 1, confirming that
+the variance is far exceeding its mean — exactly the situation
+that the previous simulation warned us about.
+
+## Negative Binomial Regression
+
+### Fitting NB Regression
+
+```{r nb-fit}
+library("MASS")
+
+m3 <- glm.nb(m2_eq, data = covid19_reg_expand)
+summary(m3)
+```
+
+The NB fit produces a **dramatic drop in residual deviance**
+relative to Poisson which reflects a much better description of the extra variability
+in the data.
+
