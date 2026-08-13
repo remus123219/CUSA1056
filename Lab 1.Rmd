@@ -1,0 +1,178 @@
+CUSA 1056
+
+Lab 1
+
+Instructions:
+
+This is a lab exercise that you have to work individually and submit within class.  After finishing your work please send this file of codes and answers to me at remus@cuhk.edu.hk 
+
+Please remember to write down your full name here: 
+
+
+
+---------------------------------------------------------------------------------------------------
+Data description:
+
+The file housing_monthly_2011_2023.csv is a monthly, county-level panel of U.S. housing market conditions spanning January 2011 to December 2023 (156 months across roughly 3,000 counties). It combines two sources: the Zillow Home Value Index (ZHVI), which provides the monthly outcome variable, and the American Community Survey (ACS) 5-year estimates, which supply annually-updated socio-economic covariates including median household income, population, median age, share of adults with a bachelor's degree or higher, unemployment rate, median home value, and median gross rent. Each county is also geolocated by the latitude and longitude of its geographic centroid, enabling spatial analysis. The main variable, zhvi, is a smoothed, seasonally-adjusted estimate of the typical home value (35th–65th percentile, single-family homes and condos) in a given county-month, expressed in current U.S. dollars. 
+
+--------------------------------------------------------------------------------------------------
+
+We first take a log transform of the zhvi variable to make the growth more linear.  We also turn the date variable to date format.  
+
+Answer:
+
+```{r}
+housing_monthly <- read.csv("housing_monthly_2011_2023.csv" , header=TRUE, sep=",")
+housing_monthly$zhvi <- log(housing_monthly$zhvi)  # taking log of the index value
+housing_monthly$date <- as.Date(housing_monthly$date)
+head(housing_monthly)
+```
+
+
+Task 1: Plot the major variable zhvi
+
+Q1. Please produce spatial plots for the variable zhvi of the counties at June 2023 (i.e. month==6 and year==2023).  Please describe what you observe.
+
+Answer:
+
+```{r, warning=FALSE}
+library(ggplot2)
+housing_july <- subset(housing_monthly, month == 6 & year == 2023)
+
+ZHVI_plot <- ggplot(housing_july) +
+  geom_point(aes(x = lon, y = lat, colour = zhvi), size = 1.5) +
+  scale_colour_viridis_c(name = "log of USD", option = "turbo") +
+  geom_path(data = map_data("state"),
+            aes(x = long, y = lat, group = group)) +
+  coord_fixed(xlim = c(-125, -67), ylim = c(25, 50)) +
+  xlab("Longitude (deg)") + ylab("Latitude (deg)") +
+  theme_bw()
+
+ZHVI_plot
+```
+
+
+Q2. Please produce a time series plot for 6 randomly chosen counties (3 on a row).  Please describe what you observe. (to enhance reproducibility, please put set.seed(12) as the first line of your code)
+
+Answer:
+
+```{r, warning=FALSE}
+set.seed(12)
+library(dplyr)
+
+
+UIDs      <- unique(housing_monthly$GEOID)
+UIDs_sub  <- sample(UIDs, 6)
+housing_sub <- filter(housing_monthly, GEOID %in% UIDs_sub)
+
+ZHVI_TS <- ggplot(housing_sub) +
+  geom_line(aes(x = date, y = zhvi)) +
+  facet_wrap(~ RegionName, ncol = 3) +
+  xlab("Date") +
+  ylab("ZHVI (log of USD)") +
+  theme_bw() +
+  theme(panel.spacing = unit(1, "lines"))
+
+ZHVI_TS
+```
+
+Q3. Produce Hovmöller plots for both latitude vs time and longitude vs time.  What do you observe?
+
+Answer:
+
+```{r, warning=FALSE}
+lim_lat  <- range(housing_monthly$lat)
+lim_lon  <- range(housing_monthly$lon)
+lim_t    <- range(housing_monthly$date)
+lat_axis <- seq(lim_lat[1], lim_lat[2], length = 25)
+lon_axis <- seq(lim_lon[1], lim_lon[2], length = 25)
+t_axis   <- seq(lim_t[1],   lim_t[2],   length = 100)
+
+housing_grid       <- housing_monthly
+dists_lat          <- abs(outer(housing_monthly$lat, lat_axis, "-"))
+dists_lon          <- abs(outer(housing_monthly$lon, lon_axis, "-"))
+housing_grid$lat   <- lat_axis[apply(dists_lat, 1, which.min)]
+housing_grid$lon   <- lon_axis[apply(dists_lon, 1, which.min)]
+
+# ---- Latitude vs time ----
+zhvi_lat_Hov <- group_by(housing_grid, lat, date) %>%
+  summarise(zhvi = mean(zhvi, na.rm = TRUE), .groups = "drop")
+
+Hovmoller_lat <- ggplot(zhvi_lat_Hov) +
+  geom_tile(aes(x = lat, y = date, fill = zhvi)) +
+  scale_fill_distiller(name = "log of USD", palette = "Spectral")+
+  xlab("Latitude (deg)") + ylab("Date") +
+  theme_bw()
+
+Hovmoller_lat
+
+# ---- Longitude vs time ----
+zhvi_lon_Hov <- group_by(housing_grid, lon, date) %>%
+  summarise(zhvi = mean(zhvi, na.rm = TRUE), .groups = "drop")
+
+Hovmoller_lon <- ggplot(zhvi_lon_Hov) +
+  geom_tile(aes(x = lon, y = date, fill = zhvi)) +
+  scale_fill_distiller(name = "log of USD", palette = "Spectral") +
+  xlab("Longitude (deg)") + ylab("Date") +
+  theme_bw()
+
+Hovmoller_lon
+```
+
+Task 2: Spatial temporal linear regression
+
+Q4. Fit a linear regression model with covariates being latitude, longitude, time (create a new variable "time" with value 1 = Jan 2011, value 2 = Feb 2011, etc.), spatial basis functions (use 9 basis functins) and some other social economic variables (up to your choice)
+
+```{r, warning=FALSE}
+library("FRK")
+library("sp")
+
+# Create a time index: month 1 = Jan 2011, month 2 = Feb 2011, ...
+housing_monthly$time <- (housing_monthly$year - 2011)*12+housing_monthly$month
+
+# Build Gaussian radial basis functions at a single resolution
+G <- auto_basis(data = housing_monthly[, c("lon", "lat")] %>% SpatialPoints(),
+                nres = 1,
+                type = "Gaussian")
+
+# Evaluate basis functions at each observation location
+S <- eval_basis(basis = G,
+                s     = housing_monthly[, c("lon", "lat")] %>% as.matrix()) %>%
+     as.matrix()
+
+colnames(S) <- paste0("B", 1:ncol(S))
+```
+
+```{r, warning=FALSE}
+reg_df <- cbind(housing_monthly, S) %>%
+  dplyr::select(zhvi,
+                lon, lat, time,
+                median_income, population, median_age,
+                pct_bachelors, unemployment_rate, median_rent,
+                B1:B9)
+
+library(lubridate)
+
+eq1  <- zhvi ~ lon + lat + time +
+               median_income + population + median_age +
+               pct_bachelors + unemployment_rate + median_rent + .
+
+lm_m <- lm(formula = eq1,
+           data    = reg_df)
+
+summary(lm_m)
+```
+
+Q5. Extend the linear regression model in some way that you think may be fruitful.  Write down your observations.
+
+```{r, warning=FALSE}
+eq2  <- zhvi ~ (lon + lat + time)^2 +
+               median_income + population + median_age +
+               pct_bachelors + unemployment_rate + median_rent + .
+
+lm_m <- lm(formula = eq2,
+           data    = reg_df)
+
+summary(lm_m)
+```
+

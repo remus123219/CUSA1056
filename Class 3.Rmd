@@ -1,0 +1,1108 @@
+---
+title: "CUSA1056 Space-Time Data Science"
+author: "Dr. Remus Ho"
+date: "`r Sys.Date()`"
+subtitle: "Class 3: Regression for spatio-temporal data"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    toc: true
+    toc_depth: 2
+    number_sections: true
+geometry: margin=1in
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center",
+  fig.width = 6,      # safe PDF width
+  fig.height = 4,
+  out.width = "100%", # scale to page width
+  fig.crop = FALSE
+)
+```
+
+# Introduction
+
+In this class we will study **spatio-temporal regression**, i.e. statistical
+models for data that vary jointly across space *and* time. We shall consider "trend surface models" only because of its simplicity and as a direct extension from linear regression.
+
+Our roadmap for the morning session today is:
+
+| Part | Topic                                            | 
+|:----:|:-------------------------------------------------|
+| 1    | Interpolation vs Linear Regression                      |
+| 2    | Deterministic Prediction: Inverse Distance Weighting | 
+| 3    | Linear Regression Models with Basis Functions           | 
+| 4    | Poisson and Negative Binomial Regression for Count Data                | 
+---
+
+# Interpolation vs Linear Regression (Part 1)
+
+Before we get to spatial and spatio-temporal models, it is worth spending time on two ideas that underpin almost everything that follows:
+
+- **Interpolation** — passing a smooth (in some sense) function through a set of
+  observed points.
+- **Linear regression** — the most widely-used framework for turning that
+  idea into a *statistical* model, with parameters that we can estimate,
+  test, and interpret.
+
+We treat them in parallel because they answer subtly different questions,
+and because the distinction will re-appear in Part 2 and 3 when we contrast
+**IDW (a pure interpolator)** with **regression-based approaches** to
+spatial prediction.
+
+## Interpolation
+
+Suppose we observe pairs \((x_i, y_i)\) for \(i = 1, \ldots, n\) and want a
+function \(\widehat{f}(x)\) that describes how \(y\) depends on \(x\). Two
+broad strategies exist:
+
+- **Interpolation.** Require the fitted curve to pass *exactly* through
+  every observed point:
+  $$
+  \widehat{f}(x_i) \;=\; y_i \qquad \text{for all } i.
+  $$
+  Examples: piecewise-linear interpolation, cubic splines, and — in the
+  spatial setting — **Inverse Distance Weighting (IDW)**.
+- **Regression** Allow the curve to *miss* the observed points in exchange
+  for being simpler, more stable, and less sensitive to noise:
+  $$
+  \widehat{f}(x_i) \;\approx\; y_i,
+  $$
+  with the discrepancy \(y_i - \widehat{f}(x_i)\) treated as *residual
+  variation*. Example: ordinary least-squares regression.
+
+The right choice depends on whether we believe the data are essentially
+**noise-free** (interpolation) or **noisy** (regression). For most
+real-world problems — certainly for COVID-19 case counts, temperature
+observations, or house prices — the data contain substantial noise, and a
+more statistical approach is more honest.
+
+We now focus on the very important **linear
+regression** method.
+
+## Linear Regression
+
+### The Model
+
+Given observations \((\mathbf{x}_i, y_i)\) for \(i = 1, \ldots, n\), where
+\(\mathbf{x}_i = (x_{i1}, \ldots, x_{ip})^{\top}\), the linear regression
+model assumes
+
+$$
+y_i \;=\; \beta_0 + \beta_1 x_{i1} + \cdots + \beta_p x_{ip} + \varepsilon_i,
+\qquad \varepsilon_i \stackrel{\text{iid}}{\sim} N(0, \sigma^{2}).
+$$
+
+The word "linear" refers to *linearity in the coefficients* \(\beta_k\),
+**not** in the covariates. This is a crucial and often-missed point: we can
+use non-linear transformations of \(x\) (squares, logs, sines, radial basis
+functions) as columns of our design matrix, and the model is still linear.
+This observation is the seed of the basis-function expansion we will
+develop in Part 3.
+
+### Matrix Form and the Design Matrix
+
+Stacking all \(n\) equations gives the compact form
+
+$$
+\mathbf{y} \;=\; \mathbf{X}\boldsymbol{\beta} + \boldsymbol{\varepsilon},
+$$
+
+where
+
+$$
+\mathbf{y} = \begin{pmatrix} y_1 \\ \vdots \\ y_n \end{pmatrix},
+\quad
+\mathbf{X} = \begin{pmatrix}
+1 & x_{11} & \cdots & x_{1p} \\
+\vdots & \vdots & \ddots & \vdots \\
+1 & x_{n1} & \cdots & x_{np}
+\end{pmatrix},
+\quad
+\boldsymbol{\beta} = \begin{pmatrix} \beta_0 \\ \vdots \\ \beta_p \end{pmatrix}.
+$$
+
+The matrix \(\mathbf{X}\) is the **design matrix**, and its columns are the
+**features** we hand to the regression. When we replace the raw \(x_{ij}\)
+with basis functions \(\phi_k(\mathbf{s}_i)\) in Part 3, we will simply be
+building a different design matrix.
+
+### Ordinary Least Squares (OLS)
+
+OLS chooses \(\boldsymbol{\beta}\) to minimise the sum of squared residuals,
+
+$$
+\widehat{\boldsymbol{\beta}}
+\;=\; \arg\min_{\boldsymbol{\beta}}
+\sum_{i=1}^{n} \bigl(y_i - \mathbf{x}_i^{\top}\boldsymbol{\beta}\bigr)^{2}
+\;=\; \arg\min_{\boldsymbol{\beta}}
+\|\mathbf{y} - \mathbf{X}\boldsymbol{\beta}\|^{2}.
+$$
+
+Setting the gradient to zero yields the celebrated **normal equations**,
+whose solution is the closed form
+
+$$
+\widehat{\boldsymbol{\beta}} \;=\; (\mathbf{X}^{\top}\mathbf{X})^{-1}\mathbf{X}^{\top}\mathbf{y}.
+$$
+
+Fitted values and residuals are
+
+$$
+\widehat{\mathbf{y}} = \mathbf{X}\widehat{\boldsymbol{\beta}}, \qquad
+\mathbf{e} = \mathbf{y} - \widehat{\mathbf{y}}.
+$$
+
+### Interpreting the Coefficients
+
+Each coefficient \(\beta_k\) has a "partial-effect" interpretation:
+
+> \(\beta_k\) is the expected change in \(y\) associated with a **one-unit
+> increase in \(x_k\)**, holding all other covariates fixed.
+
+The intercept \(\beta_0\) is the expected value of \(y\) when all covariates
+are zero. Statistical software also reports:
+
+- **Standard errors** \(\mathrm{SE}(\widehat{\beta}_k)\), quantifying
+  sampling uncertainty;
+- **t-statistics** \(t_k = \widehat{\beta}_k / \mathrm{SE}(\widehat{\beta}_k)\)
+  and their **p-values**, testing \(H_0: \beta_k = 0\);
+- **\(R^{2}\)**, the fraction of variance in \(y\) explained by the model.
+
+### Key Assumptions
+
+The OLS coefficient estimates are unbiased and have the standard sampling
+distribution provided:
+
+- **Linearity**;
+- **Independent** errors \(\varepsilon_i\);
+- **Constant variance** (homoscedasticity), \(\mathrm{Var}[\varepsilon_i] = \sigma^{2}\);
+- **Normal** errors.
+
+While linear regression is very useful, the above assumptions may fail in some applications.  For example in part 4, **Poisson / Negative Binomial GLMs** will be used to handle non-Gaussian responses.
+
+## Numerical Example: A Simple Simulated Dataset
+
+To make the mechanics concrete, we simulate 40 points from the true
+relationship
+
+$$
+y_i \;=\; 2 + 0.8\, x_i + \varepsilon_i,
+\qquad \varepsilon_i \sim N(0, 1.2^{2}),
+$$
+
+fit an OLS line, and inspect the output.
+
+```{r ols-example, fig.width=7, fig.height=4}
+set.seed(2026)        # Set the random seed to 2026 to make the random number generation reproducible.
+
+n <- 40               # Define the sample size n as 40 observations.
+
+x <- runif(n, min = 0, max = 10)  
+# Generate n random values for x from a uniform distribution between 0 and 10.
+
+y <- 2 + 0.8 * x + rnorm(n, sd = 1.2)  
+# Generate y values using a linear model with intercept 2 and slope 0.8 plus normally distributed 
+# noise with standard deviation 1.2.
+
+# Fit OLS
+fit <- lm(y ~ x)      # Fit an ordinary least squares regression model of y on x.
+
+summary(fit)          # Display a detailed summary of the fitted regression 
+                      # model, including coefficients and statistics.
+```
+
+Inspecting the output, the estimated coefficients should be close to the
+true values \(\beta_0 = 2\) and \(\beta_1 = 0.8\), with standard errors
+that reflect the sample size and the noise level \(\sigma\).
+
+### Visualising the Fit
+
+```{r ols-plot, fig.width=7, fig.height=4}
+plot(x, y, pch = 16, col = "steelblue",
+     xlab = "x", ylab = "y",
+     main = "OLS line with residuals")  
+# Create a scatter plot of x and y with solid blue points, labeled axes, and a descriptive title.
+
+abline(fit, col = "darkred", lwd = 2)  
+# Add the fitted OLS regression line to the plot in dark red with a thicker line width.
+
+# Draw residuals as vertical segments
+y_hat <- fitted(fit)  
+# Compute the fitted (predicted) values from the regression model and store them in y_hat.
+
+segments(x, y, x, y_hat, col = "grey60", lty = 2)  
+# Draw dashed grey vertical lines from each observed y value to its corresponding fitted value to
+# #visualize residuals.
+
+legend("topleft", bty = "n", cex = 0.9,
+       legend = c("data", "OLS fit", "residuals"),
+       col    = c("steelblue", "darkred", "grey60"),
+       pch    = c(16, NA, NA),
+       lty    = c(NA, 1, 2),
+       lwd    = c(NA, 2, 1))  
+# Add a legend in the top-left corner explaining the data points, OLS line, and residual lines with
+# matching styles.
+```
+
+Notice two things in the plot:
+
+- The OLS line **does not pass through every point** — this is not interpolation. 
+- The residuals (grey dashed segments) are what OLS minimises: the sum of
+  their squared lengths.
+
+### Reconstructing OLS "by Hand"
+
+To reinforce the matrix formulation, we can compute
+\(\widehat{\boldsymbol{\beta}} = (\mathbf{X}^{\top}\mathbf{X})^{-1}\mathbf{X}^{\top}\mathbf{y}\)
+directly and confirm we recover the same numbers as `lm()`.
+
+```{r ols-by-hand}
+X <- cbind(1, x)                              # design matrix
+beta_hat <- solve(t(X) %*% X) %*% t(X) %*% y  # normal equations
+beta_hat
+coef(fit)                                     # compare with lm()
+```
+
+The two sets of numbers agree to machine precision. 
+
+### A Non-Linear function Extension: Same Machinery, New Columns
+
+To make the "linear in the coefficients" point tangible, we now fit a
+**quadratic** curve to a slightly non-linear dataset, using OLS with a
+design matrix whose columns are \((1, x, x^{2})\).
+
+```{r ols-quadratic, fig.width=7, fig.height=4}
+set.seed(7)  
+# Reproducibility
+
+x  <- seq(0, 10, length.out = 60)  
+# x grid (0–10, 60 pts)
+
+y  <- 1 + 0.5 * x - 0.05 * x^2 + rnorm(length(x), sd = 0.6)  
+# Quadratic model + noise
+
+fit_quad <- lm(y ~ x + I(x^2))  
+# Fit quadratic regression
+
+coef(fit_quad)  
+# Show coefficients
+
+# Plot the fit
+xg <- seq(0, 10, length.out = 200)  
+# Fine grid for smooth curve
+
+yg <- predict(fit_quad, newdata = data.frame(x = xg))  
+# Predicted values
+
+plot(x, y, pch = 16, col = "steelblue",
+     xlab = "x", ylab = "y",
+     main = "Quadratic fit via linear regression")  
+# Scatter plot
+
+lines(xg, yg, col = "darkred", lwd = 2)  
+# Add fitted curve
+```
+
+The **fitted curve is non-linear**, yet the *model* is a linear regression
+— we merely added a column \(x^{2}\) to the design matrix. This is exactly
+the trick that we will exploit in Part 3 to build flexible spatial
+regressions on top of simple linear machinery.
+
+With this foundation in place, we can turn in Part 2 to our first
+spatial method — **Inverse Distance Weighting** — and see how the
+interpolation method being applied on a map.
+---
+
+# Deterministic Prediction — Inverse Distance Weighting (Part 2)
+
+## Motivation
+
+Consider the NOAA data set of **maximum daily temperatures** in July 2023 that we have studied in class 1. Suppose we want to predict the
+temperature at a location \(\mathbf{s}_0\) on 15 July 2023 where no observation (or even no station) exists.
+
+*How should we combine the observations?* A natural intuition is
+**Tobler's First Law of Geography**:
+
+> *"Everything is related to everything else, but near things are more related
+> than distant things."*
+
+This suggests giving **more weight** to observations that are *close* to the
+prediction location — and because we have data at multiple times, "close"
+should be understood in both **space** and **time**.
+
+## Inverse Distance Weighting (IDW)
+
+Suppose the data are
+$$
+\{Z(\mathbf{s}_{ij}; t_j) : i = 1, \ldots, m_j;\ j = 1, \ldots, T\}.
+$$
+
+The **inverse-distance-weighted (IDW) predictor** at a location
+\((\mathbf{s}_0; t_0)\) is a weighted average of *all* observations:
+
+$$
+\widehat{Z}(\mathbf{s}_0; t_0) \;=\; \sum_{j=1}^{T} \sum_{i=1}^{m_j}
+   w_{ij}(\mathbf{s}_0; t_0)\, Z(\mathbf{s}_{ij}; t_j),
+$$
+
+where the weights are
+
+$$
+w_{ij}(\mathbf{s}_0; t_0) \;=\;
+\frac{\widetilde{w}_{ij}(\mathbf{s}_0; t_0)}
+     {\sum_{k=1}^{T}\sum_{\ell=1}^{m_k}\widetilde{w}_{\ell k}(\mathbf{s}_0; t_0)},
+\qquad
+\widetilde{w}_{ij}(\mathbf{s}_0; t_0) \;=\;
+\frac{1}{d\bigl((\mathbf{s}_{ij}; t_j),(\mathbf{s}_0; t_0)\bigr)^{\alpha}}.
+$$
+
+Key features:
+
+- \(d(\cdot,\cdot)\) is a distance function (often Euclidean over
+  \((\text{lon},\text{lat},t)\)).
+- \(\alpha > 0\) is the **power parameter**; larger \(\alpha\) concentrates the
+  weight on the nearest observations (less smoothing), smaller \(\alpha\)
+  gives a smoother surface.
+- The weights sum to 1, so \(\widehat{Z}\) is a **weighted average**.
+- If \((\mathbf{s}_0; t_0)\) coincides with a data location, then
+  \(\widetilde{w}\to\infty\) there and the predictor **interpolates exactly**.
+
+## IDW in R — using `gstat`
+
+We will interpolate temperatures on a spatio-temporal grid, deliberately
+**omitting 15 July 2023** from the training data, so that we can later see
+how the method behaves on a day with no observations.
+
+```{r idw-gstat}
+library("dplyr")
+library("ggplot2")
+library("gstat")
+
+NOAA_df <- read.csv("NOAA_2023 v2.csv", header = TRUE, sep = ",")  
+# Load NOAA data from CSV
+
+# Subset to Tmax, July 2023
+Tmax <- filter(NOAA_df,
+               var  == "Tmax" &
+               month == 7     &
+               year  == 2023)  
+# Filter: Tmax, July 2023
+
+# 20 x 20 spatial grid, 6 time points across the month
+pred_grid <- expand.grid(lon = seq(-100, -80, length = 20),
+                         lat = seq(  32,  46, length = 20),
+                         day = seq(   5,  30, length = 6))  
+# Create space–time prediction grid
+
+# Remove 15 July from training data
+Tmax_no_15 <- filter(Tmax, !(day == 15))  
+# Exclude day 15 observations
+
+# IDW with alpha = 4
+Tmax_July_idw <- idw(formula   = z ~ 1,
+                     locations = ~ lon + lat + day,
+                     data      = Tmax_no_15,
+                     newdata   = pred_grid,
+                     idp       = 4)  
+# Perform 3D IDW interpolation (power = 4)
+```
+
+The main arguments of `gstat::idw` are:
+
+- `formula`   — the variable to interpolate (here `z ~ 1`, i.e. no covariates).
+- `locations` — the spatial and temporal coordinates.
+- `data`      — the observed data.
+- `newdata`   — the prediction locations (space–time grid).
+- `idp`       — the power parameter \(\alpha\).
+
+We can then plot `Tmax_July_idw$var1.pred` on the prediction grid.
+Note that on 15 July the predicted surface will look **smoother** than on
+the surrounding days: with no data available on that day, the predictor
+borrows information from adjacent days. This is a typical behaviour of any
+predictor on days with no observations.
+
+```{r}
+library("dplyr")      # Data manipulation
+library("ggplot2")    # Plotting
+library("gstat")      # Spatial interpolation (IDW)
+library("maps")       # Map outlines
+
+# ---------------------------------------------------------------------------
+# 1. Attach predictions to the grid
+# ---------------------------------------------------------------------------
+
+pred_grid1 <- pred_grid %>%
+  mutate(z_pred = Tmax_July_idw$var1.pred)  
+# Add IDW predictions to grid
+
+pred_days <- sort(unique(pred_grid1$day))  
+# Get the 6 prediction days
+
+Tmax_days <- Tmax %>% 
+  filter(day %in% pred_days)  
+# Keep observations for those days
+
+# ---------------------------------------------------------------------------
+# 2. Basemap (state + country outlines)
+# ---------------------------------------------------------------------------
+
+states_map <- map_data("state")  
+# Load US state boundaries
+
+world_map  <- map_data("world")  
+# Load world country boundaries
+
+lon_range <- range(pred_grid1$lon)  
+# Longitude limits
+
+lat_range <- range(pred_grid1$lat)  
+# Latitude limits
+
+# ---------------------------------------------------------------------------
+# 3. Faceted map: one panel per day
+# ---------------------------------------------------------------------------
+
+ggplot() +
+
+  geom_raster(data = pred_grid1,
+              aes(x = lon, y = lat, fill = z_pred)) +
+  # IDW surface (filled grid)
+
+  geom_polygon(data = world_map,
+               aes(x = long, y = lat, group = group),
+               fill = NA, colour = "black", size = 0.3) +
+  # Country borders
+
+  geom_path(data = states_map,
+            aes(x = long, y = lat, group = group),
+            colour = "grey40", size = 0.25) +
+  # State borders
+
+  geom_point(data = Tmax_days,
+             aes(x = lon, y = lat, fill = z),
+             shape = 21, colour = "white", size = 1.8, stroke = 0.3) +
+  # Observed stations
+
+  scale_fill_distiller(name = expression(T[max]~"("*degree*C*")"),
+                       palette = "Spectral",
+                       limits  = c(10, 45)) +
+  # Color scale for temperature
+
+  coord_quickmap(xlim = lon_range, ylim = lat_range, expand = FALSE) +
+  # Fix map extent and aspect ratio
+
+  facet_wrap(~ day, nrow = 2,
+             labeller = labeller(day = function(d) paste("July", d, "2023"))) +
+  # One panel per day
+
+  labs(x = "Longitude", y = "Latitude",
+       title = expression("IDW interpolation of "*T[max]*
+                          " (July 2023), "*alpha*" = 4"),
+       subtitle = "15 July was withheld from the training data") +
+  # Titles and labels
+
+  theme_bw(base_size = 12) +
+  # Clean theme
+
+  theme(strip.background = element_rect(fill = "grey90"),
+        panel.grid.minor = element_blank())  
+  # Minor styling adjustments
+```
+
+
+
+
+## Choosing \(\alpha\): Cross-Validation
+
+The parameter \(\alpha\) controls the **degree of smoothing**. Its value
+should not be picked by eye — the standard objective tool is
+**cross-validation (CV)**.
+
+### K-fold Cross-Validation
+
+Randomly split the data into \(K\) roughly equal folds. For each fold
+\(k = 1,\ldots,K\):
+
+1. Fit the model on the remaining \(K-1\) folds.
+2. Predict the observations in fold \(k\).
+3. Compute the mean squared prediction error
+   $$
+   \mathrm{MSPE}_k \;=\; \frac{1}{m_k}\sum_{i=1}^{m_k}\bigl(Z_i - \widehat Z_i^{(-k)}\bigr)^2.
+   $$
+
+The K-fold CV score is
+
+$$
+CV_{(K)} \;=\; \frac{1}{K}\sum_{k=1}^{K}\mathrm{MSPE}_k .
+$$
+
+Common choices are \(K=5\) or \(K=10\).
+
+### Leave-One-Out CV (LOOCV)
+
+The special case \(K = m\) is **leave-one-out CV**:
+
+$$
+CV_{(m)} \;=\; \frac{1}{m}\sum_{i=1}^{m}\bigl(Z_i - \widehat Z_i^{(-i)}\bigr)^2.
+$$
+
+LOOCV has **low bias** but can have **high variance**, and it can be
+computationally expensive since it requires \(m\) refits.
+
+### Tuning \(\alpha\) by LOOCV in R
+
+The idea is simple: for each candidate value of \(\alpha\), do IDW using
+each observation in turn as a held-out point, compute the squared error, and
+average. Then pick the \(\alpha\) that minimises the CV score.
+
+We can do this by calling `gstat::idw` in a loop and using the observation
+locations themselves as `newdata` (leaving one out at a time).
+
+```{r loocv-idw}
+# Candidate values of alpha
+alphas <- seq(2, 8, by = 1)
+CV     <- numeric(length(alphas))
+
+n <- nrow(Tmax)
+
+for (a in seq_along(alphas)) {
+  sq_err <- numeric(n)
+
+  for (i in 1:n) {
+    # leave observation i out
+    train <- Tmax[-i, ]
+    test  <- Tmax[ i, ]
+
+    pred <- idw(formula   = z ~ 1,
+                locations = ~ lon + lat + day,
+                data      = train,
+                newdata   = test,
+                idp       = alphas[a],
+                debug.level = 0)
+
+    sq_err[i] <- (test$z - pred$var1.pred)^2
+  }
+
+  CV[a] <- mean(sq_err)
+}
+
+# LOOCV curve and optimum
+plot(alphas, CV, type = "o",
+     xlab = expression(alpha),
+     ylab = expression(CV[(m)](alpha)))
+
+alphas[which.min(CV)]   # optimal alpha
+min(CV)                 # minimum CV score
+```
+
+**Interpretation.** For the NOAA July 2023 data, the LOOCV curve is
+convex with a clear minimum around \(\alpha \approx 4\), giving a minimum
+CV score of about 4.23. This tells us that giving fairly strong weight to
+nearby observations works best for these data.
+
+> **Practical tip.** For a large dataset, LOOCV can be slow because it
+> refits \(m\) times. A common compromise is **10-fold CV**, which is much
+> faster and empirically gives a good bias–variance trade-off.
+
+Limitations of Deterministic Predictors: IDW is simple and fast, but it does not explicitly model **measurement error** and provides **no model-based prediction variance**. These limitations motivate the **statistical models** we look at next.
+
+---
+
+# Linear Regression Models with Basis Functions (Part 3)
+
+## From Deterministic to Statistical Prediction
+
+Instead of averaging observations, we can specify a **regression model** that
+attempts to capture spatio-temporal structure through **covariates** (a
+"trend surface"). Formally, for observation \(Z(\mathbf{s}_i; t_j)\):
+
+$$
+Z(\mathbf{s}_i; t_j) \;=\; \beta_0 + \beta_1 X_1(\mathbf{s}_i; t_j)
+                            + \cdots + \beta_p X_p(\mathbf{s}_i; t_j)
+                            + e(\mathbf{s}_i; t_j),
+$$
+
+with \(e(\mathbf{s}_i; t_j) \stackrel{\text{iid}}{\sim} N(0,\sigma_e^2)\).
+
+Advantages over deterministic predictors:
+
+- Easy to implement in any regression software.
+- Provides **model-based prediction standard errors**.
+- Allows **inference** on covariate effects.
+
+## Basis Functions
+
+### Motivation
+
+A plain linear regression in the coordinates,
+$$
+Y(\mathbf{s}) \;=\; \beta_0 + \beta_1 s_1 + \beta_2 s_2,
+$$
+can only produce a **tilted plane** as a fitted surface. Real
+spatio-temporal processes (temperature fields, infection rates, pollution
+levels) are rarely that simple — they exhibit bumps, ridges, and localised
+features.
+
+The idea of a **basis-function expansion** is to enrich the design matrix
+with a set of *known* functions of the coordinates, so that a *linear* model
+in the coefficients can represent a highly *non-linear* surface. Formally,
+we write
+
+$$
+Y(\mathbf{s}) \;=\; \alpha_1 \phi_1(\mathbf{s}) + \alpha_2 \phi_2(\mathbf{s})
+                 + \cdots + \alpha_r \phi_r(\mathbf{s})
+              \;=\; \sum_{k=1}^{r} \alpha_k \phi_k(\mathbf{s}),
+$$
+
+where:
+
+- \(\phi_1,\ldots,\phi_r\) are **known** basis functions chosen in advance;
+- \(\alpha_1,\ldots,\alpha_r\) are **unknown coefficients** to be estimated
+  (by OLS, once the \(\phi_k(\mathbf{s}_i)\) are treated as columns of a
+  design matrix).
+
+### Two Families: Global vs Local
+
+Basis functions fall broadly into two families:
+
+- **Global basis functions** are non-zero over the *entire* domain. Changing
+  the coefficient of one such basis therefore affects the fitted surface
+  *everywhere*. Examples: **polynomials** and **sines/cosines** (Fourier basis).
+- **Local basis functions** are non-zero only in a small neighbourhood of a
+  *centre* (or are so strongly concentrated that they may as well be).
+  Changing the coefficient of one such basis affects the fit only *near*
+  its centre. Examples: **bisquare** and **wavelets**, and — in practice — **Gaussian radial basis functions**.
+
+We now illustrate these two ideas with the two examples in the title.
+
+### Example 1: Polynomial Basis (Global)
+
+The polynomial basis of order \(p\) on a one-dimensional domain is
+
+$$
+\phi_0(s) = 1,\quad \phi_1(s) = s,\quad \phi_2(s) = s^2,\quad \ldots,\quad
+\phi_p(s) = s^p.
+$$
+
+Each \(\phi_k(s) = s^k\) is non-zero for every \(s \ne 0\), and in fact grows
+without bound as \(|s|\) becomes large. This is the defining property of a
+**global** basis: the function has support over the whole real line.
+
+Consequences:
+
+- Fitting a polynomial regression is a *global* operation — a single
+  observation in one part of the domain can influence the fit in another
+  part.
+- Increasing the order \(p\) gives more flexibility, but high-order
+  polynomials are notoriously unstable.
+
+### Example 2: Gaussian Radial Basis (Local, in practice)
+
+A **Gaussian radial basis function** centred at \(\mathbf{c}_k\) with
+bandwidth \(\theta\) is
+
+$$
+\phi_k(\mathbf{s}) \;=\; \exp\!\Bigl(-\tfrac{\|\mathbf{s} - \mathbf{c}_k\|^2}{\theta^2}\Bigr).
+$$
+
+To build a basis expansion we place a *grid* of centres
+\(\mathbf{c}_1, \ldots, \mathbf{c}_r\) over the domain and use one Gaussian
+"bump" per centre.
+
+Strictly speaking, a Gaussian is *never exactly zero*, so it is not
+technically compactly supported. However, it decays so rapidly that its
+value is negligible more than a few bandwidths away from its centre. For
+this reason, Gaussian radial basis functions behave, in practice, as **local**
+basis functions: changing \(\alpha_k\) mostly affects the fit near
+\(\mathbf{c}_k\). Truly local bases such as **bisquare** are exactly zero
+outside a fixed radius.
+
+### Visualising the Two Bases (1D)
+
+The following R snippet plots a degree-4 polynomial basis and a set of
+Gaussian radial basis functions on the interval \([0, 1]\), to make the
+global vs local distinction visible.
+
+```{r basis-illustration, fig.width=8, fig.height=4}
+op <- par(mfrow = c(1, 2))
+
+s <- seq(0, 1, length = 400)
+
+# --- Polynomial basis (global) ---
+matplot(s, cbind(1, s, s^2, s^3, s^4), type = "l", lty = 1, lwd = 2,
+        xlab = "s", ylab = expression(phi[k](s)),
+        main = "Polynomial basis (global)")
+legend("topleft",
+       legend = c("1", "s", "s^2", "s^3", "s^4"),
+       col = 1:5, lty = 1, bty = "n", cex = 0.8)
+
+# --- Gaussian radial basis (local in practice) ---
+centres <- seq(0.1, 0.9, by = 0.1)
+theta   <- 0.08
+Phi     <- sapply(centres, function(c) exp(-((s - c)^2) / theta^2))
+
+matplot(s, Phi, type = "l", lty = 1, lwd = 2,
+        xlab = "s", ylab = expression(phi[k](s)),
+        main = "Gaussian radial basis (local)")
+
+par(op)
+```
+
+Looking at the two panels:
+
+- Each **polynomial** curve spans the *whole* interval and its magnitude is
+  meaningful at every \(s\). A single coefficient therefore has global
+  influence.
+- Each **Gaussian bump** is concentrated around its centre and effectively
+  zero elsewhere. A single coefficient influences the fit only in a small
+  neighbourhood of that centre.
+
+### From 1D to 2D (Space) and to Space–Time
+
+The same ideas extend directly to two dimensions. A Gaussian radial basis
+on the plane,
+$$
+\phi_k(\mathbf{s}) \;=\; \exp\!\Bigl(-\tfrac{\|\mathbf{s} - \mathbf{c}_k\|^2}{\theta^2}\Bigr),
+\qquad \mathbf{s} \in \mathbb{R}^2,
+$$
+gives a smooth "hill" centred at \(\mathbf{c}_k\) — exactly what we need to
+represent localised spatial features. For space–time problems we can form
+**tensor products** (too technical to explain here, understand it conceptually is sufficient) of spatial and temporal bases,
+\(\phi_{k}(\mathbf{s})\,\psi_{\ell}(t)\), to describe features that are
+localised in both space and time.
+
+### Choosing a Basis in Practice
+
+Two practical points:
+
+- **Number and placement of centres.** For radial bases we need to choose
+  how many bumps to use and where to place them. A common strategy is a
+  regular grid over the domain, possibly at *multiple resolutions*
+  (coarse + fine), so that the fit can pick up features of different sizes.
+  The `FRK` package (used later) automates this with `auto_basis()`.
+- **Bandwidth \(\theta\).** Small \(\theta\) gives narrow, very local bumps
+  (wiggly fit); large \(\theta\) gives wide bumps (smooth fit). Just as with
+  \(\alpha\) in IDW, this is a smoothing parameter that can be tuned by
+  cross-validation.
+
+With this vocabulary in place, we now turn to application to a new COVID-19
+example, where a linear trend surface is combined with radial basis
+functions to capture residual spatial structure.
+
+## Application to a dataset of COVID cases in US
+
+The dataset used for the regression combines publicly available sources at the US county level. Daily cumulative COVID-19 case and death counts were obtained from the Johns Hopkins University Center for Systems Science and Engineering (JHU CSSE) county-level time series, from which weekly new cases and new deaths were derived. The series covers every week from 22 January 2020, when JHU began reporting, through 9 March 2023, when the county-level feed was retired, giving just over three years of weekly observations that span all major waves of the US epidemic. County boundaries and demographic information were obtained from the 2016–2020 five-year American Community Survey (ACS) via the US Census Bureau's API, specifically table S1810, which provides the percentage of the civilian non-institutionalised population reporting a disability — used here as a proxy for the share of long-term ill residents. Longitude and latitude were computed as the geographic centroids of each county's polygon. 
+
+The sources were merged on the five-digit county FIPS code, yielding an analytic dataset in which each row corresponds to one county on one week, with variables for new cases, new deaths, centroid longitude and latitude, weeks elapsed since the start of the series, and the county's share of population with a disability.
+
+Fitting is by ordinary least squares (OLS) that picks parameters that minimize RSS:
+
+$$
+\mathrm{RSS} \;=\; \sum_{j=1}^{T}\sum_{i=1}^{m}
+   \bigl(Z(\mathbf{s}_i; t_j) - \widehat Z(\mathbf{s}_i; t_j)\bigr)^2,
+$$
+
+with \(\widehat\sigma_e^2 = \mathrm{RSS}/(mT - p - 1)\).
+
+Once fitted we can **predict** \(Z(\mathbf{s}_0; t_0)\) at any location for
+which we have covariates, together with a **prediction standard error**.
+Because our basis functions here are spatio-temporally smooth, the fitted
+surface is much smoother than the IDW predictions.
+
+## Constructing Basis Functions with `FRK`
+
+The **FRK** package can automatically build basis functions at multiple
+resolutions.
+
+```{r frk-basis}
+library("FRK")
+library("sp")
+
+covid19_US <- read.csv("covid_US_weekly.csv", header=T, sep=",")
+covid19_US$new_cases_per_ten_thousand <-covid19_US$new_cases/covid19_US$population*100000
+
+# `covid19_US` is our spatio-temporal data frame with columns
+
+# Build Gaussian radial basis functions at a single resolution
+RB <- auto_basis(data = covid19_US[, c("lon", "lat")] %>% SpatialPoints(),
+                nres = 1,
+                type = "Gaussian")
+
+# Evaluate basis functions at each observation location
+RB_col <- eval_basis(basis = RB,
+                s = covid19_US[, c("lon", "lat")] %>% as.matrix()) %>% as.matrix()
+
+colnames(RB_col) <- paste0("B", 1:ncol(RB_col))
+```
+
+The columns of `RB_col` are simply new covariates (one per basis function) that
+we can plug into a linear model.
+
+## Application: COVID-19 Regression Across US counties
+
+Our response variable is the weekly number of new cases per 100000 people in a county.  The independent variables are latitude, longitude, week number, basis function and one more covariate, the percentage of longterm illness in the county.
+
+### Attach Basis Functions
+
+```{r covid-basis}
+covid19_reg <- cbind(covid19_US, RB_col) %>%
+  dplyr::select(new_cases_per_ten_thousand,
+                lon, lat, week, pct_disab,
+                B1:B9)
+```
+
+### Fit the regression model
+
+```{r covid-lm}
+library(lubridate)
+
+m1_eq  <- new_cases_per_ten_thousand ~ lon + lat + week + pct_disab + B1 + 
+            B2 + B3 + B4 + B5 + B6 +B7 +B8 +B9
+
+m1 <- lm(formula = m1_eq,
+           data    = covid19_reg)
+
+summary(m1)
+```
+
+### Interpretation
+
+- **`pct_disab`** — a one-unit increase in the share of long-term ill
+  population is associated with a large increase in the rate of new COVID-19
+  cases per 100,000 people. The coefficient is highly significant, in line
+  with the exploratory findings that vulnerable populations experienced
+  higher infection rates.
+- **`date_value`** — positive and significant, capturing the **overall temporal
+  growth** of the pandemic during the study period.
+- **`lon`** — negative: as we move **east** (i.e. towards higher longitude
+  in US), infection rates tend to be lower, i.e. rates are
+  higher in the west.
+- **Basis functions `B1`–`B9`** — capture residual spatial structure not
+  explained by the linear trend surface; some are not individually
+  significant here, but they matter jointly.
+
+### Assessing Model Fit
+
+Even though many coefficients are significant, the overall \(R^2\) is very low. This is a small figure and it reflects several issues:
+
+- The response is a **count rate** and highly skewed — a
+  Gaussian linear model is a poor match for its distribution.
+- Only **one contextual factor** is included; many other socio-demographic
+  drivers matter.
+
+### In-Class Challenge
+
+> **Challenge.** If you think that new cases grow and then drop during the period.  How can you modify the model?
+
+---
+
+# Poisson and Negative Binomial Regression for Count Data (Part 4)
+
+## Why Not OLS for Counts?
+
+The variable of concern in our regression is the number of new cases which is a **count** by itself. Counts have three properties that clash with the Gaussian linear model:
+
+- They are **non-negative integers** — an OLS fit can (and will) predict
+  negative values.
+- Their distribution is typically **right-skewed** with many small values
+  and a few very large ones.
+- Their **variance grows with the mean** — larger counties with more cases
+  also show more variability. OLS assumes constant variance.
+
+An alternative of modelling is a **generalised linear model (GLM)** whose
+response distribution is designed for counts. The two workhorses are the
+**Poisson** and the **Negative Binomial** distributions.
+
+## The Poisson Distribution
+
+The Poisson distribution with mean \(\mu > 0\) has probability mass function
+
+$$
+P(Y = y) \;=\; \frac{\mu^{y}\, e^{-\mu}}{y!}, \qquad y = 0, 1, 2, \ldots
+$$
+
+Its defining property is the **equidispersion identity**:
+
+$$
+E[Y] \;=\; \mathrm{Var}[Y] \;=\; \mu.
+$$
+
+That is, once you know the mean, you know the variance. This is a very
+strong (and often unrealistic) restriction.
+
+## The Negative Binomial Distribution
+
+The Negative Binomial (NB) distribution is another choice for count data.  We do not write down its probability mass function here but we highlight two main differences with Poisson.  Firstly the distribution has 2 parameters that gives more flexible shapes. Secondly, its variance is higher than mean that allows it to take care of **overdispersion** often found in count data.  For the second point, we have the following:
+
+$$
+E[Y] \;=\; \mu, \qquad
+\mathrm{Var}[Y] \;=\; \mu + \frac{\mu^{2}}{\theta},
+$$
+
+where \(\theta > 0\) is a **dispersion parameter**. The extra term
+\(\mu^{2}/\theta\) allows the variance to exceed the mean:
+
+- As \(\theta \to \infty\), \(\mathrm{Var}[Y] \to \mu\) and NB collapses to
+  Poisson.
+- Small \(\theta\) implies large excess variance — heavy overdispersion.
+
+## Numerical Illustration: Mean vs Variance
+
+Let's simulate 10,000 draws from each distribution with the *same* mean
+\(\mu = 5\) and compare their empirical variances.
+
+```{r pois-nb-sim}
+set.seed(1)
+
+mu     <- 5
+theta  <- 2       # NB dispersion parameter (smaller -> more dispersion)
+n      <- 10000
+
+y_pois <- rpois(n, lambda = mu)
+y_nb   <- rnbinom(n, mu = mu, size = theta)
+
+data.frame(
+  Distribution = c("Poisson", "Negative Binomial"),
+  Mean         = c(mean(y_pois),     mean(y_nb)),
+  Variance     = c(var(y_pois),      var(y_nb)),
+  "Var / Mean" = c(var(y_pois)/mean(y_pois), var(y_nb)/mean(y_nb)),
+  check.names  = FALSE
+)
+```
+
+Both samples have mean close to 5, but the NB sample has variance roughly
+\(5 + 5^2/2 = 17.5\), i.e. about **3.5 times** the mean. The Poisson sample
+has variance close to the mean, as it must.
+
+## Visualising Both Distributions
+
+Now compare the shapes of the two distributions side by side. We fix
+\(\mu = 5\) and let \(\theta\) vary for the NB to see how dispersion
+affects the shape.
+
+```{r pois-nb-plot, fig.width=8, fig.height=4}
+y_grid <- 0:25
+
+pmf_pois   <- dpois(y_grid, lambda = mu)
+pmf_nb_1   <- dnbinom(y_grid, mu = mu, size = 1)    # heavy dispersion
+pmf_nb_2   <- dnbinom(y_grid, mu = mu, size = 2)    # moderate
+pmf_nb_10  <- dnbinom(y_grid, mu = mu, size = 10)   # mild (close to Poisson)
+
+op <- par(mfrow = c(1, 2))
+
+# Left: Poisson pmf
+plot(y_grid, pmf_pois, type = "h", lwd = 3, col = "steelblue",
+     xlab = "y", ylab = "P(Y = y)",
+     main = expression(paste("Poisson, ", mu == 5)))
+points(y_grid, pmf_pois, pch = 16, col = "steelblue")
+
+# Right: NB pmfs at different theta, plus Poisson for reference
+matplot(y_grid,
+        cbind(pmf_pois, pmf_nb_10, pmf_nb_2, pmf_nb_1),
+        type = "b", pch = 16, lty = 1, lwd = 2,
+        col = c("black", "darkgreen", "orange", "red"),
+        xlab = "y", ylab = "P(Y = y)",
+        main = expression(paste("NB (", mu == 5, "), varying ", theta)))
+legend("topright", bty = "n", cex = 0.8,
+       legend = c("Poisson", expression(theta == 10),
+                  expression(theta == 2), expression(theta == 1)),
+       col = c("black", "darkgreen", "orange", "red"),
+       lty = 1, pch = 16)
+
+par(op)
+```
+
+Notice:
+
+- The Poisson pmf is fairly symmetric and tightly concentrated around
+  \(\mu = 5\).
+- As \(\theta\) decreases, the NB pmf becomes progressively **more skewed**,
+  with a **higher probability of zero** and a **much heavier right tail**.
+  These are exactly the features we typically see in real count data such as
+  COVID-19 cases.
+- For large \(\theta\), the NB curve is almost indistinguishable from the
+  Poisson one — consistent with the theoretical limit
+  \(\mathrm{Var}[Y] \to \mu\).
+
+**Take-away.** If real data show more zeros and a heavier tail than
+Poisson can produce, we need a distribution with a separate dispersion
+parameter. That is exactly what NB gives us.
+
+## Poisson Regression as a GLM
+
+Poisson regression models the log of the mean as a linear function of
+covariates:
+
+$$
+Y_i \sim \text{Poisson}(\mu_i), \qquad
+\log(\mu_i) \;=\; \mathbf{x}_i^{\top} \boldsymbol{\beta}.
+$$
+
+The **log link** ensures \(\mu_i > 0\), and coefficients have a
+multiplicative interpretation: a one-unit increase in \(x_k\) multiplies the
+expected count by \(\exp(\beta_k)\).
+
+
+### Fitting Poisson Regression to the COVID-19 Data
+
+```{r poisson-fit}
+covid19_reg_expand <- cbind(covid19_reg, new_cases=covid19_US$new_cases,
+                            population=covid19_US$population)
+
+m2_eq  <- new_cases ~ offset(log(population)) + lon + lat + week + pct_disab + B1 +
+                         B2 + B3 + B4 + B5 + B6 +B7 +B8 +B9
+
+m2 <- glm( m2_eq,data = covid19_reg_expand, 
+                  family = poisson(link = "log"))
+
+summary(m2)
+
+```
+
+Interestingly we find the latitude now becomes significant and all basis functions significant.  Is that a good fit?  We can have the following check for Poisson regression.
+
+### Diagnosing Overdispersion
+
+Under a correct Poisson model, the ratio of the residual deviance to the
+residual degrees of freedom should be close to **1**. Any substantially
+larger value is a red flag for overdispersion.
+
+```{r poisson-dispersion}
+m2$deviance / m2$df.residual
+```
+
+For the COVID-19 data this ratio is much greater than 1, confirming that
+the variance is far exceeding its mean — exactly the situation
+that the previous simulation warned us about.
+
+## Negative Binomial Regression
+
+NB regression uses the same log link as Poisson,
+
+$$
+\log(\mu_i) \;=\; \mathbf{x}_i^{\top} \boldsymbol{\beta},
+$$
+
+but assumes \(Y_i \sim \text{NB}(\mu_i, \theta)\), allowing
+\(\mathrm{Var}[Y_i] = \mu_i + \mu_i^{2}/\theta\). The parameter \(\theta\) is
+estimated from the data alongside \(\boldsymbol{\beta}\).
+
+### Fitting NB Regression
+
+```{r nb-fit}
+library("MASS")
+
+m3 <- glm.nb(m2_eq, data = covid19_reg_expand)
+summary(m3)
+```
+
+The NB fit produces a **dramatic drop in residual deviance**
+relative to Poisson which reflects a much better description of the extra variability
+in the data.
+
